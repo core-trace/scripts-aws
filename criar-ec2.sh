@@ -40,6 +40,66 @@ bash -n configuracao.sh
 # Confere as credenciais do laboratório
 aws sts get-caller-identity >/dev/null
 
+# ============================================================
+# CRIAR DATA LAKE NO S3
+# ============================================================
+
+# ============================================================
+# CRIAR DATA LAKE NO S3
+# ============================================================
+
+BUCKET_DATALAKE="coretrace-data-lake-sptech-grupo8-2026"
+
+if aws s3api head-bucket --bucket "$BUCKET_DATALAKE" 2>/dev/null; then
+
+    echo "Data Lake já existe: $BUCKET_DATALAKE"
+    echo "Reutilizando o bucket..."
+
+else
+
+    echo "Criando Data Lake: $BUCKET_DATALAKE"
+
+    aws s3api create-bucket \
+        --bucket "$BUCKET_DATALAKE" \
+        --region "$AWS_DEFAULT_REGION"
+
+    echo "Data Lake criado com sucesso."
+
+fi
+
+
+# ============================================================
+# CRIAR PREFIXOS
+# ============================================================
+
+for prefixo in bronze silver gold
+do
+
+    if aws s3api head-object \
+        --bucket "$BUCKET_DATALAKE" \
+        --key "$prefixo/" >/dev/null 2>&1
+    then
+
+        echo "$prefixo/ já existe."
+
+    else
+
+        echo "Criando $prefixo/..."
+
+        aws s3api put-object \
+            --bucket "$BUCKET_DATALAKE" \
+            --key "$prefixo/" >/dev/null
+
+    fi
+
+done
+
+echo "Data Lake pronto:"
+echo "s3://$BUCKET_DATALAKE"
+echo "  bronze/"
+echo "  silver/"
+echo "  gold/"
+
 # ADD - Acessa a EC2 e verifica a configuração automaticamente.
 verificar_ec2() {
     local instancia="$1"

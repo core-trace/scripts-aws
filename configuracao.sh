@@ -279,32 +279,69 @@ rm -f "$SSH_BACKUP"
 # INSTALAR PYTHON
 # ============================================================
 
-echo "Instalando Python..."
+if command -v python3 >/dev/null 2>&1 && \
+   dpkg -s python3-pip python3-venv >/dev/null 2>&1; then
 
-apt install -y python3 python3-pip python3-venv
+    echo "Python já está instalado."
+
+else
+
+    echo "Instalando Python..."
+
+    apt install -y python3 python3-pip python3-venv
+
+fi
 
 
 # ============================================================
 # INSTALAR JAVA 21
 # ============================================================
 
-echo "Instalando Java 21..."
+if dpkg -s openjdk-21-jdk >/dev/null 2>&1; then
 
-apt install -y openjdk-21-jdk
+    echo "Java 21 já está instalado."
 
+else
+
+    echo "Instalando Java 21..."
+
+    apt install -y openjdk-21-jdk
+
+fi
 
 # ============================================================
 # INSTALAR DOCKER
 # ============================================================
 
-echo "Instalando Docker..."
+if command -v docker >/dev/null 2>&1; then
 
-apt install -y docker.io
+    echo "Docker já está instalado."
 
-# Iniciar Docker automaticamente com o sistema
-systemctl enable docker
-systemctl start docker
+else
 
+    echo "Instalando Docker..."
+
+    apt install -y docker.io
+
+fi
+
+
+# Garantir que o Docker inicia automaticamente
+systemctl enable docker >/dev/null
+
+
+# Só inicia se não estiver rodando
+if systemctl is-active --quiet docker; then
+
+    echo "Docker já está ativo."
+
+else
+
+    echo "Iniciando Docker..."
+
+    systemctl start docker
+
+fi
 
 # Adicionar usuários da equipe ao grupo docker
 echo "Adicionando usuários ao grupo docker..."
@@ -320,17 +357,39 @@ usermod -aG docker matheus
 # ============================================================
 # INSTALAR MYSQL
 # ============================================================
+if command -v mysql >/dev/null 2>&1 && \
+   dpkg -s mysql-server >/dev/null 2>&1; then
+
+    echo "MySQL já está instalado."
+
+else
+
+    echo "Instalando MySQL..."
+
+    apt install -y mysql-server
+
+fi
 
 
-echo "Instalando MySQL..."
+# Garantir que o MySQL inicia automaticamente
+systemctl enable mysql >/dev/null
 
-apt install -y mysql-server
 
-# Iniciar MySQL automaticamente com o sistema
-systemctl enable mysql
-systemctl start mysql
+# Só inicia se não estiver rodando
+if systemctl is-active --quiet mysql; then
 
-# ADD - Testa se mysql ta funcionando
+    echo "MySQL já está ativo."
+
+else
+
+    echo "Iniciando MySQL..."
+
+    systemctl start mysql
+
+fi
+
+
+# Testa se o MySQL está funcionando
 systemctl is-active mysql
 mysql -uroot -e "SELECT 1;"
 
