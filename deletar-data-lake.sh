@@ -12,7 +12,7 @@ export AWS_DEFAULT_REGION=us-east-1
 export AWS_PAGER=""
 
 # Mesmo nome utilizado no criar-ec2.sh
-BUCKET_DATALAKE="coretrace-data-lake-sptech-grupo8-2026"
+BUCKET_DATALAKE="coretrace-data-lake-sptech-grupo7-2026"
 
 
 # ============================================================

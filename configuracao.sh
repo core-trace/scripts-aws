@@ -259,9 +259,16 @@ Match User urubu_sftp
 Match all
 EOF
 
+# Garante o diretório de execução antes de validar o SSH durante o cloud-init.
+install -d -o root -g root -m 0755 /run/sshd
+
 # Verificar configuração do SSH
 if /usr/sbin/sshd -t; then
-    systemctl reload ssh
+    if systemctl is-active --quiet ssh; then
+        systemctl reload ssh
+    else
+        systemctl start ssh
+    fi
 else
     if [ "$SSH_EXISTIA" = true ]; then
         cp -p "$SSH_BACKUP" "$SSH_CONFIG"
