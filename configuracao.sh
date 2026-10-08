@@ -438,7 +438,7 @@ echo "Configurando MySQL no Docker..."
 install -d -o root -g root -m 700 /etc/coretrace
 
 if [ ! -f /etc/coretrace/mysql.env ]; then
-    printf 'MYSQL_ROOT_PASSWORD=coretrace123\nMYSQL_DATABASE=CoreTrace\n' \
+    printf 'MYSQL_ROOT_PASSWORD=coretrace123\nMYSQL_DATABASE=coretrace\n' \
         > /etc/coretrace/mysql.env
 fi
 
@@ -471,7 +471,7 @@ fi
 
 BANCO_PRONTO=false
 for tentativa in {1..60}; do
-    if docker exec coretrace_mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -Nse "SELECT 1" CoreTrace' >/dev/null 2>&1; then
+    if docker exec coretrace_mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -Nse "SELECT 1" coretrace' >/dev/null 2>&1; then
         BANCO_PRONTO=true
         break
     fi

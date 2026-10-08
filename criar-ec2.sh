@@ -16,13 +16,13 @@ IMAGEM=""
 
 TIPO=t3.small
 
-SUBREDE= #COLOCAR
+SUBREDE=""
 
 # ID do grupo de segurança em EC2 > Grupos de segurança.
 # Ele deve pertencer a mesma VPC da sub-rede acima.
 # ANTES de executar: Regras de entrada > Editar regras > SSH > Meu IP.
 # Conferir TCP 22 e o IP público do responsável com /32, e salvar.
-GRUPO= #COLOCAR
+GRUPO=""
 
 # nome do par em EC2 > Pares de chaves.
 # Manter vockey somente se corresponder a chave privada baixada.
@@ -216,7 +216,7 @@ sudo systemctl is-active docker mysql
 sudo mysql -uroot -e "SELECT 1;"
 
 sudo docker exec coretrace_mysql sh -c \
-    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SELECT 1;" Coretrace'
+    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SELECT 1;" coretrace'
 
 echo "Verificação automática concluída com sucesso."
 VERIFICACAO
