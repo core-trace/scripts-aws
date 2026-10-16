@@ -10,24 +10,32 @@ cd "$(dirname "$0")"
 export AWS_DEFAULT_REGION=us-east-1
 export AWS_PAGER=""
 
-NOME=coretrace-ec2
+NOME="${NOME:-coretrace-ec2}"
 
-IMAGEM=""
+IMAGEM="${IMAGEM:-}"
 
-TIPO=t3.small
+TIPO="${TIPO:-t3.small}"
 
-SUBREDE=""
+SUBREDE="${SUBREDE:-}"
 
 # ID do grupo de segurança em EC2 > Grupos de segurança.
 # Ele deve pertencer a mesma VPC da sub-rede acima.
 # ANTES de executar: Regras de entrada > Editar regras > SSH > Meu IP.
 # Conferir TCP 22 e o IP público do responsável com /32, e salvar.
-GRUPO=""
+GRUPO="${GRUPO:-}"
 
 # nome do par em EC2 > Pares de chaves.
 # Manter vockey somente se corresponder a chave privada baixada.
 # Aqui vai o NOME do par na AWS, não o caminho do arquivo .pem.
-CHAVE=vockey
+CHAVE="${CHAVE:-vockey}"
+
+# Opcional: nome do instance profile já permitido no laboratório.
+# Vazio mantém a criação sem role. acesso das aplicações ao S3 fica pendente
+PERFIL_IAM="${PERFIL_IAM:-}"
+OPCOES_IAM=()
+if [ -n "$PERFIL_IAM" ]; then
+    OPCOES_IAM=(--iam-instance-profile "Name=$PERFIL_IAM")
+fi
 
 # Vê se existe o arquivo de configuraçaõ antes
 if [ ! -f configuracao.sh ]; then
@@ -38,7 +46,7 @@ fi
 bash -n configuracao.sh
 
 # Confere as credenciais do laboratório
-aws sts get-caller-identity >/dev/null
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 validar_imagem() {
     local nome_imagem
@@ -103,9 +111,9 @@ fi
 # CRIAR DATA LAKE NO S3
 # ============================================================
 
-BUCKET_DATALAKE="coretrace-data-lake-sptech-grupo7-2026"
+BUCKET_DATALAKE="bucket-coretrace"
 
-if aws s3api head-bucket --bucket "$BUCKET_DATALAKE" 2>/dev/null; then
+if aws s3api head-bucket --bucket "$BUCKET_DATALAKE" --expected-bucket-owner "$AWS_ACCOUNT_ID" 2>/dev/null; then
 
     echo "Data Lake já existe: $BUCKET_DATALAKE"
     echo "Reutilizando o bucket..."
@@ -127,7 +135,7 @@ fi
 # CRIAR PREFIXOS
 # ============================================================
 
-for prefixo in bronze silver gold
+for prefixo in raw trusted client
 do
 
     if aws s3api head-object \
@@ -151,9 +159,9 @@ done
 
 echo "Data Lake pronto:"
 echo "s3://$BUCKET_DATALAKE"
-echo "  bronze/"
-echo "  silver/"
-echo "  gold/"
+echo "  raw/"
+echo "  trusted/"
+echo "  client/"
 
 # ADD - Acessa a EC2 e verifica a configuração automaticamente.
 verificar_ec2() {
@@ -216,7 +224,15 @@ sudo systemctl is-active docker mysql
 sudo mysql -uroot -e "SELECT 1;"
 
 sudo docker exec coretrace_mysql sh -c \
-    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SELECT 1;" coretrace'
+    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SELECT 1 FROM servidores LIMIT 0; SELECT 1 FROM componentes LIMIT 0;" coretrace'
+VERSAO=$(sudo docker exec coretrace_mysql sh -c \
+    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -Nse "SELECT COUNT(*) FROM coretrace.coretrace_schema_version WHERE versao=\"001_inicial\";"')
+[ "$VERSAO" = 1 ] || { echo "Registro de instalação inicial não encontrado."; exit 1; }
+
+sudo git -C /var/www/coretrace/website rev-parse --is-inside-work-tree
+for repo in database api-java api-filtro-de-captura scripts-captura; do
+    sudo git -C "/opt/coretrace/$repo" rev-parse --is-inside-work-tree
+done
 
 echo "Verificação automática concluída com sucesso."
 VERIFICACAO
@@ -235,10 +251,30 @@ if [ -n "$EXISTENTES" ]; then
     fi
 
     verificar_ec2 "$EXISTENTES"
+    echo "Para aplicar mudanças no setup existente, use atualizar-ec2.sh"
     exit 0
 fi
 
 echo "Criando a EC2 Ubuntu..."
+USER_DATA=$(mktemp)
+trap 'rm -f "$USER_DATA"' EXIT
+{
+    printf '#!/bin/bash\nset -Eeuo pipefail\n'
+    for variavel in BRANCH_DATABASE BRANCH_WEBSITE BRANCH_JAVA BRANCH_FILTRO BRANCH_CAPTURA; do
+        if [ -v "$variavel" ]; then
+            printf 'export %s=%q\n' "$variavel" "${!variavel}"
+        fi
+    done
+    printf '%s\n' 'SETUP=$(mktemp)' 'trap '\''rm -f "$SETUP"'\'' EXIT'
+    printf "base64 -d <<'CORETRACE_SETUP' | gzip -dc > \"\$SETUP\"\n"
+    gzip -c configuracao.sh | base64
+    printf 'CORETRACE_SETUP\n'
+    printf 'bash "$SETUP"\n'
+} > "$USER_DATA"
+if [ "$(wc -c < "$USER_DATA")" -gt 16384 ]; then
+    echo "Setup excedeu o limite de 16 KiB do user data mesmo após compressão."
+    exit 1
+fi
 
 INSTANCIA=$(aws ec2 run-instances \
     --image-id "$IMAGEM" \
@@ -248,11 +284,12 @@ INSTANCIA=$(aws ec2 run-instances \
     --subnet-id "$SUBREDE" \
     --security-group-ids "$GRUPO" \
     --associate-public-ip-address \
+    "${OPCOES_IAM[@]}" \
     --block-device-mappings \
         '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
     --tag-specifications \
         "ResourceType=instance,Tags=[{Key=Name,Value=$NOME}]" \
-    --user-data file://configuracao.sh \
+    --user-data "file://$USER_DATA" \
     --query 'Instances[0].InstanceId' \
     --output text)
 

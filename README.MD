@@ -9,7 +9,7 @@
     <a href="#etapa-3">Credenciais do lab</a> &nbsp;·&nbsp;
     <a href="#etapa-6">Alterações obrigatórias no script</a> &nbsp;·&nbsp;
     <a href="#etapa-8">Execução do script</a> &nbsp;·&nbsp;
-    <a href="#etapa-10">Exclusão</a>
+    <a href="#etapa-12">Exclusão</a>
   </p>
 </div>
 
@@ -28,9 +28,11 @@
 - [6. Escolher a sub-rede](#etapa-6)
 - [7. Configurar o grupo de segurança](#etapa-7)
 - [8. Conferir e executar o script](#etapa-8)
-- [9. Confirmar a conclusão](#etapa-9)
-- [10. Excluir a EC2 e seus volumes](#etapa-10)
-- [11. Excluir o Data Lake](#etapa-11)
+- [9. Preparar o acesso aos repositórios privados](#etapa-9)
+- [10. Retomar a configuração da EC2](#etapa-10)
+- [11. Confirmar a conclusão](#etapa-11)
+- [12. Excluir a EC2 e seus volumes](#etapa-12)
+- [13. Excluir o Data Lake](#etapa-13)
 
 </details>
 
@@ -42,14 +44,16 @@
 
 Clone o repositório `scripts-aws`
 
-Confira se estes quatro arquivos estão juntos na mesma pasta:
+Confira se estes seis arquivos estão juntos na mesma pasta:
 
 - `criar-ec2.sh`: executado no seu **computador local** para criar a infraestrutura na AWS
 - `configuracao.sh`: enviado automaticamente pelo primeiro script pra configurar a instância
+- `preparar-github.sh`: executado na EC2 para gerar as chaves dos repositórios privados
+- `atualizar-ec2.sh`: envia e executa o setup atual em uma EC2 existente
 - `deletar-ec2.sh`: executado no **computador local** para deletar a infraestrutura na AWS
 - `deletar-data-lake.sh`: executado no **computador local** para deletar a infraestrutura do Data Lake na AWS
 
-Este roteiro utiliza esses quatro arquivos para criar, configurar e deletar instâncias EC2 na AWS.
+Este roteiro utiliza esses seis arquivos para criar, configurar e deletar instâncias EC2 na AWS.
 
 Antes de executar, será necessário preparar o terminal, configurar o acesso na AWS e preencher os dados da instância no script `criar-ec2.sh`
 
@@ -333,7 +337,7 @@ vockey
 Se ele aparecer, o nome corresponde ao valor configurado no script:
 
 ```bash
-CHAVE=vockey
+CHAVE="${CHAVE:-vockey}"
 ```
 
 O nome `vockey` identifica o par na AWS. O arquivo `labsuser.pem` é a chave privada baixada do laboratório e salva no computador. Esse é o "par"
@@ -378,7 +382,7 @@ Pro acesso SSH pela internet funcionar, a sub-rede precisa ter uma rota para um 
 No arquivo `criar-ec2.sh`, localize:
 
 ```bash
-SUBREDE= #COLOCAR
+SUBREDE="${SUBREDE:-}"
 ```
 
 Substitua pelo ID escolhido:
@@ -440,7 +444,7 @@ Copie o **ID do grupo de segurança**, que começa com `sg-`.
 No arquivo `criar-ec2.sh`, localize:
 
 ```bash
-GRUPO= #COLOCAR
+GRUPO="${GRUPO:-}"
 ```
 
 Substitua pelo ID real:
@@ -463,10 +467,54 @@ Esta etapa deve ser feita **somente pelo integrante responsável por criar a EC2
 
 **1. Abrir o terminal na pasta `scripts-aws`**
 
-Abra o terminal na pasta onde estão os scripts.
+Abra o terminal na pasta onde estão os seis scripts.
 
+**2. Conferir os dados no `criar-ec2.sh`**
 
-**2. Verificar a sintaxe dos scripts**
+A sub-rede e o grupo de segurança devem estar preenchidos com os IDs do seu laboratório, como foi mostrado nas etapas anteriores:
+
+```bash
+SUBREDE="subnet-ID_COPIADO"
+GRUPO="sg-ID_COPIADO"
+```
+
+Não copie os IDs do laboratório de outra pessoa. Esses dados ficam na sua cópia local, não precisam ir pro GitHub.
+
+A imagem pode continuar assim:
+
+```bash
+IMAGEM="${IMAGEM:-}"
+```
+
+Se estiver vazia, o script procura uma imagem oficial do Ubuntu Server 26.04 LTS na região `us-east-1` automaticamente.
+
+**3. Preencher o perfil IAM pra acessar o S3**
+
+O perfil IAM dá permissão pros programas da EC2 acessarem o bucket. Ele é separado das credenciais que você colocou no computador.
+
+No terminal local, confira os perfis disponíveis no laboratório:
+
+```bash
+aws iam list-instance-profiles --query 'InstanceProfiles[].InstanceProfileName' --output table --no-cli-pager
+```
+
+Se aparecer `LabInstanceProfile`, localize esta linha no `criar-ec2.sh`:
+
+```bash
+PERFIL_IAM="${PERFIL_IAM:-}"
+```
+
+E substitua por:
+
+```bash
+PERFIL_IAM="LabInstanceProfile"
+```
+
+Se esse perfil não aparecer ou der erro de permissão, confira no console qual perfil o laboratório permite usar antes de continuar. O perfil precisa ter acesso ao bucket `bucket-coretrace`.
+
+Salve o arquivo. Com os dados preenchidos nele, não precisa passar essas informações no comando.
+
+**4. Verificar a sintaxe dos scripts**
 
 Execute os comandos separadamente:
 
@@ -480,7 +528,7 @@ bash -n configuracao.sh
 
 Se não aparecer nenhuma mensagem, a sintaxe passou na verificação. Se aparecer um erro, corrija antes de continuar.
 
-**3. Executar a criação**
+**5. Executar a criação**
 
 Execute **sem `sudo`**:
 
@@ -488,26 +536,31 @@ Execute **sem `sudo`**:
 bash criar-ec2.sh
 ```
 
-Esse comando cria ou reutiliza o bucket S3 configurado, prepara os prefixos `bronze`, `silver` e `gold` e cria a EC2 caso não exista uma instância com o nome configurado.
+Esse comando cria ou reutiliza o bucket `bucket-coretrace`, prepara os prefixos `raw`, `trusted` e `client` e cria a EC2 caso não exista uma instância com o nome configurado.
 
-O `configuracao.sh` é enviado automaticamente para executar dentro da EC2.
+O `configuracao.sh` é enviado automaticamente pra executar dentro da EC2.
 
-**4. Aguardar a conclusão**
+**6. Aguardar a primeira configuração**
 
-Mantenha o terminal aberto. O script vai aguardar a EC2 iniciar, vai tentar conectar por SSH e vai verificar a configuração.
+Mantenha o terminal aberto. O script vai aguardar a EC2 iniciar e vai tentar conectar por SSH.
 
-Ao concluir com sucesso, deve aparecer:
-
-```text
-Verificação automática concluída com sucesso.
-```
-
-Quando uma nova instância é criada, o script também salva:
+Quando uma nova instância é criada, ele salva na pasta:
 
 - `instancia-id.txt`: identificador da EC2.
 - `instancia-ip.txt`: IP público da EC2.
 
-Se tiver um erro, salve a mensagem e confira o estado da instância no console antes de tentar de novo. Ela pode já ter sido criada mas estar subindo ainda.
+**Na primeira vez, a configuração vai parar porque faltam as chaves dos repositórios privados.** A EC2 já foi criada, mas o projeto ainda não terminou de ser preparado. Continue na etapa 9, sem criar outra instância.
+
+Se a mensagem só disser que a configuração apresentou problema, confira o log. No computador local, execute:
+
+```bash
+IP_EC2=$(cat instancia-ip.txt)
+ssh -i ~/.ssh/labsuser.pem "ubuntu@$IP_EC2" 'sudo tail -n 80 /var/log/coretrace-configuracao.log'
+```
+
+Se aparecer que `database` é privado e falta a chave, siga pra próxima etapa. Se aparecer outro erro, confira a causa antes de continuar.
+
+Se ocorrer `Connection timed out`, confira se seu IP público atual está liberado na porta 22 do grupo de segurança.
 
 <p align="right"><a href="#topo">↑ Voltar ao topo</a></p>
 
@@ -515,33 +568,47 @@ Se tiver um erro, salve a mensagem e confira o estado da instância no console a
 
 <a name="etapa-9"></a>
 
-## 9. Confirmar a conclusão
+## 9. Preparar o acesso aos repositórios privados
 
-A execução termina quando aparece:
+Os repositórios `database`, `api-java` e `scripts-captura` são privados. Pra EC2 conseguir baixar os arquivos, precisamos gerar e cadastrar uma chave de leitura pra cada um deles.
 
-```text
-Verificação automática concluída com sucesso.
-```
+`website` e `api-filtro-de-captura` são públicos e não precisam dessas chaves. A IAM Role usada pro S3 não dá acesso ao GitHub.
 
-Essa mensagem confirma que a configuração automática terminou e que as verificações do Docker, do MySQL e do banco `CoreTrace` passaram.
+**1. Enviar o auxiliar pra EC2**
 
-Para acessar o servidor, execute no computador do responsável:
+No seu computador, ainda na pasta `scripts-aws`, execute:
 
 ```bash
-ssh -i ~/.ssh/labsuser.pem ubuntu@IP_PUBLICO_DA_EC2
+IP_EC2=$(cat instancia-ip.txt)
+scp -i ~/.ssh/labsuser.pem preparar-github.sh "ubuntu@$IP_EC2:/tmp/preparar-github.sh"
 ```
 
-Substitua `IP_PUBLICO_DA_EC2` pelo endereço informado pelo script em `instancia-ip.txt` ou no console da AWS
+**2. Gerar as chaves dentro da EC2**
 
-Se ocorrer `Connection timed out`, confira se o IP público atual do computador está autorizado na porta 22 do grupo de segurança.
-
-Após corrigir a regra, execute novamente:
+Execute este comando também no terminal do seu computador. Ele acessa a EC2 e roda o auxiliar lá:
 
 ```bash
-bash criar-ec2.sh
+ssh -i ~/.ssh/labsuser.pem "ubuntu@$IP_EC2" 'sudo bash /tmp/preparar-github.sh database api-java scripts-captura'
 ```
 
-O script reutiliza a instância existente chamada `coretrace-ec2` e tenta verificar sua configuração.
+Vão aparecer três chaves públicas, cada uma com o nome do repositório correspondente. As privadas ficam na EC2, em `/etc/coretrace/github`, e não devem ser copiadas pro GitHub.
+
+Essas chaves são diferentes da `labsuser.pem`, que é usada pra você entrar na EC2.
+
+**3. Cadastrar as públicas no GitHub**
+
+Em cada um dos três repositórios privados, abra **Settings > Deploy keys > Add deploy key**.
+
+- Em **Title**, coloque um nome que identifique a EC2, por exemplo `EC2 Raphael`.
+- Em **Key**, cole a pública daquele repositório, começando em `ssh-ed25519`, tudo em uma linha.
+- Deixe **Allow write access desmarcado**.
+- Clique em **Add key**.
+
+Repita o cadastro nos três repositórios, com a chave correspondente a cada um. Não use a mesma deploy key nos três.
+
+**4. Quando criar outra EC2**
+
+Uma EC2 nova precisa das próprias chaves. As cadastradas pra outra instância não dão acesso sozinhas, porque precisam da privada correspondente. Se uma EC2 for excluída, as chaves dela no GitHub podem ser removidas quando não forem mais usadas.
 
 <p align="right"><a href="#topo">↑ Voltar ao topo</a></p>
 
@@ -549,7 +616,67 @@ O script reutiliza a instância existente chamada `coretrace-ec2` e tenta verifi
 
 <a name="etapa-10"></a>
 
-## 10. Excluir a EC2 e seus volumes
+## 10. Retomar a configuração da EC2
+
+Depois de cadastrar as três públicas, volte pro terminal do seu computador, na pasta `scripts-aws`, e execute **sem `sudo`**:
+
+```bash
+bash atualizar-ec2.sh
+```
+
+Sem passar argumento, ele usa o ID salvo em `instancia-id.txt`. Confira se esse arquivo é da EC2 que acabou de criar. Se quiser informar o ID diretamente:
+
+```bash
+bash atualizar-ec2.sh i-ID_DA_INSTANCIA
+```
+
+Esse script envia o `configuracao.sh` atual pra mesma EC2 e executa de novo. Não cria outra instância.
+
+Pode aparecer um aviso de que o cloud-init anterior teve erro. Se o erro foi a falta das chaves que você acabou de cadastrar, é esperado. O setup vai tentar continuar agora com o acesso ao GitHub configurado.
+
+Ele vai clonar os repositórios nas pastas do projeto, preparar o MySQL e importar as tabelas e dados iniciais se o banco estiver vazio.
+
+Se o banco já foi inicializado por esse setup, os dados são preservados. Se encontrar tabelas sem o registro da instalação, ele para pra conferência, sem apagar o banco.
+
+Mantenha o terminal aberto até terminar. Se aparecer outro erro, confira a mensagem antes de executar de novo.
+
+<p align="right"><a href="#topo">↑ Voltar ao topo</a></p>
+
+---
+
+<a name="etapa-11"></a>
+
+## 11. Confirmar a conclusão
+
+Depois de retomar pelo `atualizar-ec2.sh`, devem aparecer as mensagens:
+
+```text
+CONFIGURAÇÃO CONCLUÍDA
+```
+
+```text
+Setup atualizado. Aplicações ainda não foram iniciadas automaticamente.
+```
+
+Isso confirma que o setup terminou, os repositórios foram clonados e as verificações do banco passaram. Se a configuração já estiver completa na execução do `criar-ec2.sh`, ele mostra `Verificação automática concluída com sucesso.`
+
+Pra acessar o servidor depois, execute no computador do responsável:
+
+```bash
+ssh -i ~/.ssh/labsuser.pem ubuntu@IP_PUBLICO_DA_EC2
+```
+
+Substitua `IP_PUBLICO_DA_EC2` pelo endereço atual da instância. Se ela foi desligada e ligada de novo, confira o IP no console, porque ele pode ter mudado.
+
+**Essa entrega prepara o ambiente, os repositórios e o banco.** O site, a aplicação Java e os ETLs ainda não ficam rodando. Instalar as dependências das aplicações, preencher os `.env` e configurar a inicialização dos serviços é a próxima etapa.
+
+<p align="right"><a href="#topo">↑ Voltar ao topo</a></p>
+
+---
+
+<a name="etapa-12"></a>
+
+## 12. Excluir a EC2 e seus volumes
 
 > [!WARNING]
 > **A exclusão é definitiva:** os arquivos da EC2, os containers e os dados MySQL armazenados nos volumes excluídos serão perdidos. Faça backup dos dados que deseja guardar antes de continuar.
@@ -588,11 +715,11 @@ O Data Lake S3, snapshots, VPC, sub-rede, grupos de segurança e pares de chaves
 
 ---
 
-<a name="etapa-11"></a>
+<a name="etapa-13"></a>
 
-## 11. Excluir o Data Lake
+## 13. Excluir o Data Lake
 
-O script `deletar-data-lake.sh` é separado da exclusão da EC2. Ele remove os objetos atuais e tenta excluir o bucket `coretrace-data-lake-sptech-grupo7-2026`
+O script `deletar-data-lake.sh` é separado da exclusão da EC2. Ele remove os objetos atuais e tenta excluir o bucket `bucket-coretrace`
 
 Execute no computador local e sem `sudo`:
 
@@ -601,3 +728,66 @@ bash deletar-data-lake.sh
 ```
 
 <p align="right"><a href="#topo">↑ Voltar ao topo</a></p>
+
+
+## Preparação do projeto na EC2
+
+Nesta entrega, somente o MySQL da aplicação roda no Docker. O MySQL instalado no sistema fica disponível em separado.
+
+O `configuracao.sh` instala Git, Node.js, npm e Maven, além das ferramentas já existentes.
+O setup seleciona explicitamente Java e javac 21 como padrão, mesmo quando o Maven
+também instala uma versão mais recente do Java. Os repositórios são distribuídos
+conforme sua função:
+
+| Repositório | Destino na EC2 | Branch padrão | Variável para mudar a branch |
+|---|---|---|---|
+| website | /var/www/coretrace/website | dev | BRANCH_WEBSITE |
+| api-java | /opt/coretrace/api-java | main | BRANCH_JAVA |
+| api-filtro-de-captura | /opt/coretrace/api-filtro-de-captura | main | BRANCH_FILTRO |
+| scripts-captura | /opt/coretrace/scripts-captura | main | BRANCH_CAPTURA |
+| database | /opt/coretrace/database | main | BRANCH_DATABASE |
+
+O repositório do site inteiro fica em `/var/www/coretrace/website`, mas somente
+sua pasta `public` é servida pelo Express.
+As APIs e o código do ETL ficam em `/opt/coretrace`. A pasta `database` contém
+os arquivos SQL. Os dados reais do MySQL ficam no volume Docker
+`coretrace_mysql_data`. Configurações do setup ficam em `/etc/coretrace`, e seu
+log fica em `/var/log/coretrace-configuracao.log`.
+
+Os repositórios públicos usam HTTPS. Os privados exigem as deploy keys da etapa 9.
+
+### Atualizar uma EC2 existente
+
+Se precisar aplicar uma correção no setup de uma EC2 que já existe, execute no
+computador local, na pasta `scripts-aws`:
+
+```bash
+bash atualizar-ec2.sh i-ID_DA_INSTANCIA
+```
+
+Sem passar argumento, o ID é lido de `instancia-id.txt`. O script consulta o IP
+atual, confere o nome e o estado da EC2 e envia o `configuracao.sh` local via SSH.
+Não cria outra EC2.
+
+Ele reaplica o setup inteiro, incluindo pacotes, usuários e SSH, e tenta atualizar
+os repositórios. Se houver alterações locais, outra branch ou commits que não
+permitam atualizar sem merge, ele para sem descartar esses arquivos e commits.
+
+### S3 e acesso da EC2
+
+O bucket escolhido é `bucket-coretrace`, com prefixos `raw/`, `trusted/` e `client/`.
+Os nomes de bucket S3 são únicos entre contas na mesma partição AWS: se o nome estiver ocupado por outra conta, a criação falhará. Nenhum bucket ou objeto antigo
+é renomeado, movido ou apagado pelo script de criação.
+
+O `deletar-data-lake.sh` usa o mesmo bucket e exige digitar seu nome antes da exclusão.
+
+O acesso dos programas ao S3 usa o perfil IAM preenchido no script na etapa 8.
+O script não cria roles nem políticas e não copia as credenciais do computador
+pra EC2. Se o perfil não tiver as permissões necessárias no bucket, o acesso ao
+S3 precisa ser ajustado no laboratório.
+
+### O que ainda falta para rodar as aplicações
+
+Esta entrega prepara infraestrutura, código e banco. Não executa `npm install`,
+`mvn package` ou a instalação das bibliotecas Python; não gera os `.env`, não
+configura tokens Jira/Slack/e-mail, não inicia site/Java/ETLs. Esses passos exigem validação das configurações de cada aplicação.
