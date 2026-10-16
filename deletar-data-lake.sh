@@ -12,7 +12,7 @@ export AWS_DEFAULT_REGION=us-east-1
 export AWS_PAGER=""
 
 # Mesmo nome utilizado no criar-ec2.sh
-BUCKET_DATALAKE="coretrace-data-lake-sptech-grupo7-2026"
+BUCKET_DATALAKE="bucket-coretrace"
 
 
 # ============================================================
@@ -34,6 +34,12 @@ BUCKET_EXISTE=$(aws s3api list-buckets \
 if [ "$BUCKET_EXISTE" = "$BUCKET_DATALAKE" ]; then
 
     echo "Data Lake encontrado: $BUCKET_DATALAKE"
+
+    read -r -p "Para apagar todos os dados, digite o nome do bucket: " CONFIRMACAO
+    if [ "$CONFIRMACAO" != "$BUCKET_DATALAKE" ]; then
+        echo "Exclusão cancelada."
+        exit 1
+    fi
 
     # ========================================================
     # ESVAZIA O DATA LAKE

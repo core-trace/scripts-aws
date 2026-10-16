@@ -19,6 +19,20 @@ fi
 
 # ADD - Previne que se algo der errado, a execução não continue
 set -Eeuo pipefail
+exec 9>/var/lock/coretrace-configuracao.lock
+flock -n 9 || { echo "Outra configuração já está em execução."; exit 1; }
+
+# Branches de implantação
+BRANCH_DATABASE="${BRANCH_DATABASE:-main}"
+BRANCH_WEBSITE="${BRANCH_WEBSITE:-dev}"
+BRANCH_JAVA="${BRANCH_JAVA:-main}"
+BRANCH_FILTRO="${BRANCH_FILTRO:-main}"
+BRANCH_CAPTURA="${BRANCH_CAPTURA:-main}"
+# Site em /var/www; código dos demais serviços e SQLs em /opt
+PASTA_WEB=/var/www/coretrace
+PASTA_SERVICOS=/opt/coretrace
+# No teste antes do PR, pode apontar para o SQL local enviado separadamente à EC2.
+SQL_INICIAL="${SQL_INICIAL:-$PASTA_SERVICOS/database/init-ec2.sql}"
 # ADD - Regra de segurança para os arquivos
 umask 027
 # ADD - Pra ajudar a descobrir onde deu o erro. Ele diz a linha que aconteceu
@@ -38,6 +52,9 @@ echo "Atualizando o sistema..."
 
 apt update
 apt upgrade -y
+
+# Ferramentas para clonar e preparar aplicações fora do Docker
+apt install -y git openssh-client nodejs npm maven
 
 
 # ============================================================
@@ -149,18 +166,97 @@ usermod -aG sudo raphael
 
 
 # ============================================================
-# CONFIGURAR DIRETÓRIO DO PROJETO
+# CONFIGURAR DIRETÓRIOS DO PROJETO
 # ============================================================
 
-echo "Configurando diretório do projeto..."
+echo "Configurando diretórios do projeto..."
+# Os novos arquivos herdam o grupo devs
+install -d -o root -g devs -m 2770 "$PASTA_WEB" "$PASTA_SERVICOS"
 
-mkdir -p /opt/site-institucional
+if [ -e "$PASTA_SERVICOS/website" ]; then
+    echo "Site encontrado no caminho antigo: $PASTA_SERVICOS/website."
+    echo "Confira e transfira-o para $PASTA_WEB/website antes de reaplicar o setup."
+    echo "Nenhum arquivo foi movido ou apagado automaticamente."
+    exit 1
+fi
 
+# ============================================================
+# CLONAR OU ATUALIZAR REPOSITÓRIOS
+# ============================================================
+preparar_repositorio() (
+    local nome="$1" branch="$2"
+    local pasta="$3/$nome"
+    local url="https://github.com/core-trace/$nome.git"
+    local url_ssh="git@github.com:core-trace/$nome.git"
+    local chaves="${CHAVES_GITHUB:-/etc/coretrace/github}"
+    local chave="$chaves/$nome"
+    local origem
+    case "$nome" in
+        database|api-java|scripts-captura)
+            if [ ! -s "$chave" ]; then
+                echo "core-trace/$nome é privado e falta sua chave em $chave."
+                echo "Na EC2, execute preparar-github.sh e cadastre a chave pública no GitHub."
+                echo "Depois, reaplique o setup com atualizar-ec2.sh."
+                exit 1
+            fi
+            ;;
+    esac
+    if [ -f "$chave" ]; then
+        if [ ! -s "$chaves/known_hosts" ]; then
+            echo "Falta $chaves/known_hosts. Execute preparar-github.sh na EC2."
+            exit 1
+        fi
+        case "$(stat -c %a "$chave")" in
+            400|600) ;;
+            *) echo "Ajuste a permissão de $chave para 600 antes de continuar."; exit 1 ;;
+        esac
+        printf -v GIT_SSH_COMMAND 'ssh -F /dev/null -i %q -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=%q -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10' "$chave" "$chaves/known_hosts"
+        export GIT_SSH_COMMAND
+        url="$url_ssh"
+    fi
+    umask 002
+    if [ -e "$pasta" ]; then
+        origem=$(git -C "$pasta" config --get remote.origin.url) || exit 1
+        if [ ! -d "$pasta/.git" ] || { [ "$origem" != "https://github.com/core-trace/$nome.git" ] && [ "$origem" != "$url_ssh" ]; }; then
+            echo "Confira $pasta: diretório existente não corresponde ao repositório esperado."
+            exit 1
+        fi
+        if [ -n "$(git -C "$pasta" status --porcelain)" ]; then
+            echo "Há alterações locais em $pasta. Nenhum arquivo será descartado."
+            exit 1
+        fi
+        if [ "$(git -C "$pasta" symbolic-ref --short -q HEAD)" != "$branch" ]; then
+            echo "$pasta está em outra branch. Selecione $branch manualmente antes de atualizar."
+            exit 1
+        fi
+    fi
+    if ! GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code "$url" "refs/heads/$branch" >/dev/null; then
+        echo "Não foi possível acessar core-trace/$nome na branch $branch."
+        echo "Se o repositório for privado, prepare sua deploy key com preparar-github.sh e autorize a chave pública no GitHub."
+        echo "Não coloque tokens ou chaves privadas no setup ou no user data."
+        exit 1
+    fi
+    if [ ! -e "$pasta" ]; then
+        GIT_TERMINAL_PROMPT=0 git clone --branch "$branch" --single-branch "$url" "$pasta"
+    else
+        # Só alterna HTTPS/SSH depois de validar repositório, branch e acesso
+        git -C "$pasta" remote set-url origin "$url"
+        GIT_TERMINAL_PROMPT=0 git -C "$pasta" fetch origin "refs/heads/$branch"
+        git -C "$pasta" merge --ff-only FETCH_HEAD
+    fi
+)
 
-# ALT - Os subdiretorios e arquivos herdam as configurações de acesso do grupo devs com 2770
-# ORIGINAL: chmod 770 /opt/site-institucional
-chown root:devs /opt/site-institucional
-chmod 2770 /opt/site-institucional
+preparar_repositorio database "$BRANCH_DATABASE" "$PASTA_SERVICOS"
+preparar_repositorio website "$BRANCH_WEBSITE" "$PASTA_WEB"
+preparar_repositorio api-java "$BRANCH_JAVA" "$PASTA_SERVICOS"
+preparar_repositorio api-filtro-de-captura "$BRANCH_FILTRO" "$PASTA_SERVICOS"
+preparar_repositorio scripts-captura "$BRANCH_CAPTURA" "$PASTA_SERVICOS"
+
+# Não usa script.sql pq ele contém DROP DATABASE para reiniciar o ambiente local
+if [ ! -s "$SQL_INICIAL" ]; then
+    echo "SQL inicial não encontrado: $SQL_INICIAL."
+    exit 1
+fi
 
 
 # ============================================================
@@ -315,6 +411,17 @@ else
     apt install -y openjdk-21-jdk
 
 fi
+
+# O Maven pode instalar o Java padrão do Ubuntu (25), mesmo com o 21 presente.
+# Seleciona explicitamente o runtime e o compilador usados pelo projeto.
+JAVA21_HOME="/usr/lib/jvm/java-21-openjdk-$(dpkg --print-architecture)"
+if [ ! -x "$JAVA21_HOME/bin/java" ] || [ ! -x "$JAVA21_HOME/bin/javac" ]; then
+    echo "JDK 21 não encontrado em $JAVA21_HOME."
+    exit 1
+fi
+update-alternatives --set java "$JAVA21_HOME/bin/java"
+update-alternatives --set javac "$JAVA21_HOME/bin/javac"
+export JAVA_HOME="$JAVA21_HOME"
 
 # ============================================================
 # INSTALAR DOCKER
@@ -483,6 +590,41 @@ if [ "$BANCO_PRONTO" != true ]; then
     exit 1
 fi
 docker exec coretrace_mysql mysql --version
+
+# ============================================================
+# INICIALIZAR AS TABELAS SEM APAGAR DADOS
+# ============================================================
+mysql_projeto() {
+    docker exec -i coretrace_mysql sh -c \
+        'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --default-character-set=utf8mb4 -uroot "$@"' sh "$@"
+}
+
+tabelas=$(mysql_projeto -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='coretrace';")
+if [ "$tabelas" -eq 0 ]; then
+    echo "Banco vazio: importando tabelas e dados iniciais da apresentação..."
+    mysql_projeto < "$SQL_INICIAL"
+else
+    marcador=$(mysql_projeto -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='coretrace' AND table_name='coretrace_schema_version';")
+    if [ "$marcador" -ne 1 ]; then
+        echo "O banco já tem tabelas, mas não tem registro desta instalação. Dados preservados."
+        echo "Confira o banco manualmente antes de continuar; o SQL não será reaplicado."
+        exit 1
+    fi
+    echo "Banco existente: preservando tabelas e dados, sem reaplicar a instalação."
+fi
+
+versao=$(mysql_projeto -Nse "SELECT COUNT(*) FROM coretrace.coretrace_schema_version WHERE versao='001_inicial';")
+if [ "$versao" -ne 1 ]; then
+    echo "Instalação inicial incompleta. Dados preservados; confira o banco manualmente."
+    exit 1
+fi
+
+# Confere todas as tabelas da instalação aprovada.
+for tabela in empresa endereco nivel_acesso permissoes nivel_acesso_permissoes usuario \
+    perfil_servidor usuario_perfil_servidor servidores container componentes componentes_perfil; do
+    mysql_projeto coretrace -e "SELECT 1 FROM \`$tabela\` LIMIT 0;"
+done
+
 systemctl is-active docker ssh
 touch /var/lib/coretrace-configuracao-concluida
 
@@ -501,4 +643,8 @@ echo "- Java 21"
 echo "- Docker"
 echo "- MySQL"
 echo "- MySQL no Docker"
+echo "- Site em $PASTA_WEB/website"
+echo "- APIs, scripts e SQLs em $PASTA_SERVICOS"
+echo "- Tabelas e dados iniciais no MySQL Docker (127.0.0.1:3307/coretrace)"
+echo "Aplicações clonadas; dependências e inicialização dos serviços são a próxima etapa."
 echo ""

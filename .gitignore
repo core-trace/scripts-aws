@@ -1,2 +1,4 @@
 instancia-id.txt
 instancia-ip.txt
+__pycache__/
+tests
