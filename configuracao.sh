@@ -170,8 +170,12 @@ usermod -aG sudo raphael
 # ============================================================
 
 echo "Configurando diretórios do projeto..."
+
+install -d -o root -g root -m 755 /var/www
+
 # Os novos arquivos herdam o grupo devs
-install -d -o root -g devs -m 2770 "$PASTA_WEB" "$PASTA_SERVICOS"
+install -d -o root -g devs -m 2770 "$PASTA_WEB"
+install -d -o root -g devs -m 2770 "$PASTA_SERVICOS"
 
 if [ -e "$PASTA_SERVICOS/website" ]; then
     echo "Site encontrado no caminho antigo: $PASTA_SERVICOS/website."
@@ -248,6 +252,13 @@ preparar_repositorio() (
 
 preparar_repositorio database "$BRANCH_DATABASE" "$PASTA_SERVICOS"
 preparar_repositorio website "$BRANCH_WEBSITE" "$PASTA_WEB"
+
+# Garantir que o website pertença ao grupo devs
+chgrp -R devs "$PASTA_WEB/website"
+
+# Permitir leitura e acesso ao grupo devs, bloqueando outros usuários
+chmod -R g+rX,o-rwx "$PASTA_WEB/website"
+
 preparar_repositorio api-java "$BRANCH_JAVA" "$PASTA_SERVICOS"
 preparar_repositorio api-filtro-de-captura "$BRANCH_FILTRO" "$PASTA_SERVICOS"
 preparar_repositorio scripts-captura "$BRANCH_CAPTURA" "$PASTA_SERVICOS"
