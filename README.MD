@@ -55,6 +55,26 @@ Confira se estes seis arquivos estão juntos na mesma pasta:
 
 Este roteiro utiliza esses seis arquivos para criar, configurar e deletar instâncias EC2 na AWS.
 
+### Instalação do banco atualizado
+
+O setup baixa `database/init-ec2.sql` da branch `main` e o executa somente em banco vazio.
+Depois de validar as tabelas, o próprio setup cria `coretrace_schema_version` e registra
+o checksum do SQL importado. O `init` não precisa incluir essa tabela de controle.
+O esquema atual não possui a antiga tabela `container`.
+
+Em novas execuções, um SQL diferente ou um banco antigo sem checksum interrompe o setup
+com uma mensagem, preservando os dados. Atualizar o repositório não migra o banco.
+Para testar uma instalação nova sem reutilizar a EC2 anterior, informe um nome exclusivo,
+por exemplo `NOME=coretrace-ec2-init-teste bash criar-ec2.sh`, junto às configurações
+de rede e IAM descritas neste roteiro. As deploy keys dos repositórios privados
+precisam ser preparadas para cada nova EC2, conforme as etapas 9 e 10.
+
+Se `bucket-coretrace` pertencer a outra conta, informe um nome exclusivo em
+`BUCKET_DATALAKE`, por exemplo `BUCKET_DATALAKE=bucket-coretrace-ID_DA_CONTA`.
+Use esse mesmo nome na configuração das aplicações que acessam o S3.
+Na exclusão futura, passe o mesmo `BUCKET_DATALAKE` ao `deletar-data-lake.sh`;
+o script continuará exigindo a confirmação do nome antes de apagar dados.
+
 Antes de executar, será necessário preparar o terminal, configurar o acesso na AWS e preencher os dados da instância no script `criar-ec2.sh`
 
 <p align="right"><a href="#topo">↑ Voltar ao topo</a></p>

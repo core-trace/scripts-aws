@@ -111,7 +111,7 @@ fi
 # CRIAR DATA LAKE NO S3
 # ============================================================
 
-BUCKET_DATALAKE="bucket-coretrace"
+BUCKET_DATALAKE="${BUCKET_DATALAKE:-bucket-coretrace}"
 
 if aws s3api head-bucket --bucket "$BUCKET_DATALAKE" --expected-bucket-owner "$AWS_ACCOUNT_ID" 2>/dev/null; then
 
@@ -228,6 +228,11 @@ sudo docker exec coretrace_mysql sh -c \
 VERSAO=$(sudo docker exec coretrace_mysql sh -c \
     'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -Nse "SELECT COUNT(*) FROM coretrace.coretrace_schema_version WHERE versao=\"001_inicial\";"')
 [ "$VERSAO" = 1 ] || { echo "Registro de instalação inicial não encontrado."; exit 1; }
+SQL_SHA256=$(sudo sha256sum /opt/coretrace/database/init-ec2.sql)
+SQL_SHA256=${SQL_SHA256%% *}
+INSTALADO_SHA256=$(sudo docker exec coretrace_mysql sh -c \
+    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -Nse "SELECT sql_sha256 FROM coretrace.coretrace_schema_version WHERE versao=\"001_inicial\";"')
+[ "$SQL_SHA256" = "$INSTALADO_SHA256" ] || { echo "Banco não corresponde ao init atual. Confira o log do setup."; exit 1; }
 
 sudo git -C /var/www/coretrace/website rev-parse --is-inside-work-tree
 for repo in database api-java api-filtro-de-captura scripts-captura; do

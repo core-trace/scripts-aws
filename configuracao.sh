@@ -263,7 +263,7 @@ preparar_repositorio api-java "$BRANCH_JAVA" "$PASTA_SERVICOS"
 preparar_repositorio api-filtro-de-captura "$BRANCH_FILTRO" "$PASTA_SERVICOS"
 preparar_repositorio scripts-captura "$BRANCH_CAPTURA" "$PASTA_SERVICOS"
 
-# Não usa script.sql pq ele contém DROP DATABASE para reiniciar o ambiente local
+# Usa o init da EC2, importado somente quando o banco está vazio.
 if [ ! -s "$SQL_INICIAL" ]; then
     echo "SQL inicial não encontrado: $SQL_INICIAL."
     exit 1
@@ -611,9 +611,13 @@ mysql_projeto() {
 }
 
 tabelas=$(mysql_projeto -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='coretrace';")
+sql_sha256=$(sha256sum "$SQL_INICIAL")
+sql_sha256=${sql_sha256%% *}
+instalacao_nova=false
 if [ "$tabelas" -eq 0 ]; then
     echo "Banco vazio: importando tabelas e dados iniciais da apresentação..."
     mysql_projeto < "$SQL_INICIAL"
+    instalacao_nova=true
 else
     marcador=$(mysql_projeto -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='coretrace' AND table_name='coretrace_schema_version';")
     if [ "$marcador" -ne 1 ]; then
@@ -621,7 +625,23 @@ else
         echo "Confira o banco manualmente antes de continuar; o SQL não será reaplicado."
         exit 1
     fi
-    echo "Banco existente: preservando tabelas e dados, sem reaplicar a instalação."
+    echo "Banco existente: verificando se corresponde ao init atual."
+fi
+
+# Confere todas as tabelas
+for tabela in empresa endereco nivel_acesso permissoes nivel_acesso_permissoes usuario \
+    perfil_servidor usuario_perfil_servidor servidores componentes componentes_perfil; do
+    mysql_projeto coretrace -e "SELECT 1 FROM \`$tabela\` LIMIT 0;"
+done
+
+# o init do repositório
+if [ "$instalacao_nova" = true ]; then
+    mysql_projeto -e "CREATE TABLE IF NOT EXISTS coretrace.coretrace_schema_version (versao VARCHAR(50) PRIMARY KEY, sql_sha256 CHAR(64), aplicada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+    coluna=$(mysql_projeto -Nse "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='coretrace' AND table_name='coretrace_schema_version' AND column_name='sql_sha256';")
+    if [ "$coluna" -eq 0 ]; then
+        mysql_projeto -e "ALTER TABLE coretrace.coretrace_schema_version ADD COLUMN sql_sha256 CHAR(64);"
+    fi
+    mysql_projeto -e "INSERT INTO coretrace.coretrace_schema_version (versao, sql_sha256) VALUES ('001_inicial', '$sql_sha256') ON DUPLICATE KEY UPDATE sql_sha256=VALUES(sql_sha256);"
 fi
 
 versao=$(mysql_projeto -Nse "SELECT COUNT(*) FROM coretrace.coretrace_schema_version WHERE versao='001_inicial';")
@@ -630,11 +650,19 @@ if [ "$versao" -ne 1 ]; then
     exit 1
 fi
 
-# Confere todas as tabelas da instalação aprovada.
-for tabela in empresa endereco nivel_acesso permissoes nivel_acesso_permissoes usuario \
-    perfil_servidor usuario_perfil_servidor servidores container componentes componentes_perfil; do
-    mysql_projeto coretrace -e "SELECT 1 FROM \`$tabela\` LIMIT 0;"
-done
+checksum_disponivel=$(mysql_projeto -Nse "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='coretrace' AND table_name='coretrace_schema_version' AND column_name='sql_sha256';")
+if [ "$checksum_disponivel" -ne 1 ]; then
+    echo "Banco instalado com init antigo, sem checksum. Dados preservados."
+    echo "Atualizar o Git não atualiza o MySQL. É necessária uma migração antes de concluir o setup."
+    exit 1
+fi
+checksum_instalado=$(mysql_projeto -Nse "SELECT sql_sha256 FROM coretrace.coretrace_schema_version WHERE versao='001_inicial';")
+if [ "$checksum_instalado" != "$sql_sha256" ]; then
+    echo "O init-ec2.sql mudou desde a instalação deste banco. Dados preservados; SQL não reaplicado."
+    echo "Prepare uma migração para atualizar o banco existente ou teste em uma EC2 com banco vazio."
+    exit 1
+fi
+echo "Banco validado com o init atual (SHA-256: $sql_sha256)."
 
 systemctl is-active docker ssh
 touch /var/lib/coretrace-configuracao-concluida
